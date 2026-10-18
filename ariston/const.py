@@ -649,3 +649,20 @@ class MenuItemNames(IntEnum):
     def values(cls) -> str:
         """Return all menu items values"""
         return ",".join(str(c.value) for c in cls)
+
+
+class ExtraMenuItemNames(IntEnum):
+    """Menu items that not every Galevo boiler has (the comment is the
+    boiler's technical menu). They are fetched in their own request, as the
+    cloud fails the whole request if any item is unknown."""
+
+    PUMP_MODULATION = 115  # 8.2.7
+    BURNER_HOURS_CH = 120  # 8.1.0, in tens of hours
+    BURNER_HOURS_DHW = 121  # 8.1.1, in tens of hours
+    GAS_POWER = 125  # 8.2.8
+    DIVERTER_VALVE_POSITION = 129  # 8.2.4
+
+    @classmethod
+    def values(cls) -> str:
+        """Return all menu items values"""
+        return ",".join(str(c.value) for c in cls)

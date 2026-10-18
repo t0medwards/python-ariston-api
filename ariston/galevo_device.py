@@ -7,7 +7,7 @@ import logging
 from datetime import date
 from typing import Any, Optional
 
-from .ariston_api import AristonAPI
+from .ariston_api import AristonAPI, ConnectionException
 from .const import (
     ConsumptionProperties,
     ConsumptionTimeInterval,
@@ -24,6 +24,7 @@ from .const import (
     ZoneAttribute,
     ZoneMode,
     MenuItemNames,
+    ExtraMenuItemNames,
 )
 from .device import AristonDevice
 
@@ -46,6 +47,9 @@ class AristonGalevoDevice(AristonDevice):
         self.consumptions_settings: dict[str, Any] = dict()
         self.energy_account: dict[str, Any] = dict()
         self.menu_items: list[dict[str, Any]] = list()
+        self.extra_menu_items: list[dict[str, Any]] = list()
+        # Set False once the cloud rejects ExtraMenuItemNames for this boiler
+        self.extra_menu_items_supported: bool = True
 
     @property
     def consumption_type(self) -> str:
@@ -100,6 +104,15 @@ class AristonGalevoDevice(AristonDevice):
             self.umsys,
         )
         self.menu_items = self.api.get_menu_items(self.gw)
+        if self.extra_menu_items_supported:
+            try:
+                self.extra_menu_items = self.api.get_menu_items(
+                    self.gw, ExtraMenuItemNames.values()
+                )
+            except ConnectionException:
+                _LOGGER.info("Extra menu items not supported, not asking again")
+                self.extra_menu_items_supported = False
+                self.extra_menu_items = list()
         self._update_state()
 
     async def async_update_state(self) -> None:
@@ -116,6 +129,15 @@ class AristonGalevoDevice(AristonDevice):
             ),
             self.api.async_get_menu_items(self.gw),
         )
+        if self.extra_menu_items_supported:
+            try:
+                self.extra_menu_items = await self.api.async_get_menu_items(
+                    self.gw, ExtraMenuItemNames.values()
+                )
+            except ConnectionException:
+                _LOGGER.info("Extra menu items not supported, not asking again")
+                self.extra_menu_items_supported = False
+                self.extra_menu_items = list()
         self._update_state()
 
     def _get_features(self) -> None:
@@ -481,6 +503,64 @@ class AristonGalevoDevice(AristonDevice):
             MenuItemNames.CH_RETURN_TEMP.value, PropertyType.UNIT
         )
 
+    @property
+    def gas_power_value(self) -> Any:
+        """Get gas power value"""
+        return self._get_menu_item_by_id(
+            ExtraMenuItemNames.GAS_POWER.value, PropertyType.VALUE
+        )
+
+    @property
+    def gas_power_unit(self) -> Any:
+        """Get gas power unit"""
+        return self._get_menu_item_by_id(
+            ExtraMenuItemNames.GAS_POWER.value, PropertyType.UNIT
+        )
+
+    @property
+    def pump_modulation_value(self) -> Any:
+        """Get pump modulation value"""
+        return self._get_menu_item_by_id(
+            ExtraMenuItemNames.PUMP_MODULATION.value, PropertyType.VALUE
+        )
+
+    @property
+    def pump_modulation_unit(self) -> Any:
+        """Get pump modulation unit"""
+        return self._get_menu_item_by_id(
+            ExtraMenuItemNames.PUMP_MODULATION.value, PropertyType.UNIT
+        )
+
+    @property
+    def diverter_valve_position_value(self) -> Any:
+        """Get diverter valve position value"""
+        return self._get_menu_item_by_id(
+            ExtraMenuItemNames.DIVERTER_VALVE_POSITION.value, PropertyType.VALUE
+        )
+
+    @property
+    def diverter_valve_position_unit(self) -> Any:
+        """Get diverter valve position unit"""
+        return self._get_menu_item_by_id(
+            ExtraMenuItemNames.DIVERTER_VALVE_POSITION.value, PropertyType.UNIT
+        )
+
+    @property
+    def burner_hours_ch_value(self) -> Optional[float]:
+        """Get burner hours on central heating (the boiler counts in tens of hours)"""
+        value = self._get_menu_item_by_id(
+            ExtraMenuItemNames.BURNER_HOURS_CH.value, PropertyType.VALUE
+        )
+        return value * 10 if value is not None else None
+
+    @property
+    def burner_hours_dhw_value(self) -> Optional[float]:
+        """Get burner hours on hot water (the boiler counts in tens of hours)"""
+        value = self._get_menu_item_by_id(
+            ExtraMenuItemNames.BURNER_HOURS_DHW.value, PropertyType.VALUE
+        )
+        return value * 10 if value is not None else None
+
     def get_measured_temp_unit(self, zone: int) -> str:
         """Get zone measured temp unit"""
         return self._get_item_by_id(
@@ -626,7 +706,7 @@ class AristonGalevoDevice(AristonDevice):
         return next(
             (
                 item.get(item_value)
-                for item in self.menu_items
+                for item in self.menu_items + self.extra_menu_items
                 if item.get("id") == menu_item_id
             ),
             None,
