@@ -30,6 +30,10 @@ from .device import AristonDevice
 
 _LOGGER = logging.getLogger(__name__)
 
+# Failed ExtraMenuItemNames requests in a row, before they have ever
+# worked, after which a boiler is taken not to support them
+EXTRA_MENU_ITEMS_MAX_FAILURES = 3
+
 
 class AristonGalevoDevice(AristonDevice):
     """Class representing a physical device, it's state and properties."""
@@ -48,8 +52,13 @@ class AristonGalevoDevice(AristonDevice):
         self.energy_account: dict[str, Any] = dict()
         self.menu_items: list[dict[str, Any]] = list()
         self.extra_menu_items: list[dict[str, Any]] = list()
-        # Set False once the cloud rejects ExtraMenuItemNames for this boiler
+        # The cloud rejects the whole request (HTTP 500) if one of
+        # ExtraMenuItemNames is unknown to the boiler, but also fails now
+        # and then. Set False only if they never worked; once they have, a
+        # failure just clears them until the next update.
         self.extra_menu_items_supported: bool = True
+        self._extra_menu_items_worked: bool = False
+        self._extra_menu_items_failures: int = 0
 
     @property
     def consumption_type(self) -> str:
@@ -106,13 +115,10 @@ class AristonGalevoDevice(AristonDevice):
         self.menu_items = self.api.get_menu_items(self.gw)
         if self.extra_menu_items_supported:
             try:
-                self.extra_menu_items = self.api.get_menu_items(
-                    self.gw, ExtraMenuItemNames.values()
-                )
+                items = self.api.get_menu_items(self.gw, ExtraMenuItemNames.values())
             except ConnectionException:
-                _LOGGER.info("Extra menu items not supported, not asking again")
-                self.extra_menu_items_supported = False
-                self.extra_menu_items = list()
+                items = None
+            self._set_extra_menu_items(items)
         self._update_state()
 
     async def async_update_state(self) -> None:
@@ -131,14 +137,30 @@ class AristonGalevoDevice(AristonDevice):
         )
         if self.extra_menu_items_supported:
             try:
-                self.extra_menu_items = await self.api.async_get_menu_items(
+                items = await self.api.async_get_menu_items(
                     self.gw, ExtraMenuItemNames.values()
                 )
             except ConnectionException:
-                _LOGGER.info("Extra menu items not supported, not asking again")
-                self.extra_menu_items_supported = False
-                self.extra_menu_items = list()
+                items = None
+            self._set_extra_menu_items(items)
         self._update_state()
+
+    def _set_extra_menu_items(self, items: Optional[list[dict[str, Any]]]) -> None:
+        """Store an ExtraMenuItemNames reply, or count a failed request (None)"""
+        if items is not None:
+            self.extra_menu_items = items
+            self._extra_menu_items_worked = True
+            self._extra_menu_items_failures = 0
+            return
+        # Cleared rather than kept, so stale values don't look current
+        self.extra_menu_items = list()
+        self._extra_menu_items_failures += 1
+        if self._extra_menu_items_worked:
+            if self._extra_menu_items_failures == 1:
+                _LOGGER.warning("Extra menu items request failed, asking again next update")
+        elif self._extra_menu_items_failures >= EXTRA_MENU_ITEMS_MAX_FAILURES:
+            _LOGGER.info("Extra menu items not supported, not asking again")
+            self.extra_menu_items_supported = False
 
     def _get_features(self) -> None:
         """Set custom features"""
